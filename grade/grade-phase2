@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+
+import os
+import re
+import subprocess
+from gradelib import *
+
+STOPS = [stop_on_line(".*passed!.*"),
+         stop_on_line(".*failed.*"),
+         stop_on_line(".*Abort @.*")]
+
+r = Runner(save("qemu.out"))
+
+@test(30, "loaduser")
+def test_loaduser():
+  s = """
+  $ loaduser
+  ^Hello, I am at 0x080[0-9a-f]{5}
+  loaduser test: start
+  loaduser test: passed!
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "pgfault")
+def test_pgfault():
+  s = """
+  $ pgfault
+  pgfault test: start
+  ^pagefault @ 0x080[0-9a-f]{5}, errcode = [04]
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "iotest")
+def test_iotest():
+  s = """
+  $ iotest
+  iotest start.
+  input two numbers: $ 114514 1919810
+  114514 + 1919810 = 2034324
+  iotest passed!
+  """
+  _, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(['iotest', '114514 1919810']))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "brktest")
+def test_brktest():
+  s = """
+  $ brktest
+  brktest: start
+  brktest: passed!
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "systest")
+def test_systest():
+  s = """
+  $ systest
+  systest: start
+  systest: passed!
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "sleeptest")
+def test_sleep():
+  s = """
+  $ sleeptest
+  sleeptest start.
+  sleeptest passed!
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(20, "shtest")
+def test_shtest():
+  s = """
+  $ echo hello world
+  hello world
+  $ add 114 514 1919 810
+  3357
+  $ sleep 10
+  $ noshuchfile
+  sh: exec failed.
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+run_tests()

@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+
+import os
+import re
+import subprocess
+from gradelib import *
+
+STOPS = [stop_on_line(".*failed.*"),
+         stop_on_line(".*Abort @.*")]
+
+r = Runner(save("qemu.out"))
+
+@test(30, "ping")
+def test_ping():
+  cnts = [0, 0]
+  pids = set()
+  fail = False
+
+  def handle_make(n):
+    def handle(line: str):
+      nonlocal fail
+      i_str = line[15:16]
+      pid_str = line[10:11]
+      if not i_str.isdigit() or not pid_str.isdigit():
+        fail = True
+        raise TerminateTest
+      i, pid = int(i_str), int(pid_str)
+      if i != cnts[n] or cnts[n] > 7:
+        fail = True
+        raise TerminateTest
+      cnts[n] += 1
+      pids.add(pid)
+      if len(pids) > 2:
+        fail = True
+        raise TerminateTest
+      if cnts == [8, 8]:
+        raise TerminateTest
+    return handle
+
+  def set_fail(_):
+    nonlocal fail
+    fail = True
+    raise TerminateTest
+
+  r.run_qemu(call_on_line(".*failed.*", set_fail),
+             call_on_line(".*Abort @.*", set_fail),
+             call_on_line(r".*x=114514$", handle_make(0)),
+             call_on_line(r".*x=1919810$", handle_make(1)),
+             shell_script(['ping3 114514 1919810']))
+  assert cnts == [8, 8]
+  assert len(pids) == 2
+  assert not fail
+
+@test(10, "dfstest")
+def test_dfstest():
+  ans = ["#####", "#>>+#", "##..#", "#####",
+         "#####", "#>v+#", "##>^#", "#####"]
+  status = 0
+  fail = False
+
+  def handle(line: str):
+    nonlocal status, fail
+    line = line.strip()
+    if status == 1 and line == ans[5]:
+      ans[1], ans[2], ans[5], ans[6] = ans[5], ans[6], ans[1], ans[2]
+    if line != ans[status]:
+      fail = True
+      raise TerminateTest
+    status += 1
+    if status == 8:
+      raise TerminateTest
+
+  def set_fail(_):
+    nonlocal fail
+    fail = True
+    raise TerminateTest
+
+  r.run_qemu(call_on_line(".*failed.*", set_fail),
+             call_on_line(".*Abort @.*", set_fail),
+             call_on_line(r"^#[.#+^v><]{3}#$", handle),
+             shell_script(['dfstest']))
+  assert status == 8
+  assert not fail
+
+@test(20, "shtest")
+def test_shtest():
+  s = """
+  $ add 1 3 5 7
+  16
+  $ echo hello world
+  hello world
+  $ sleep 10
+  $ pingpong
+  pingpong start
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  ^p[io]ng: pid=[56], i=\d, x=\d
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "childtest")
+def test_child():
+  s = r"""
+  $ childtest 1 10 25
+  ^(parent|child) sleep\.\.\.
+  ^(parent|child) sleep\.\.\.
+  child exit @ 0
+  $ childtest 1 25 10
+  ^(parent|child) sleep\.\.\.
+  ^(parent|child) sleep\.\.\.
+  child exit @ 0
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "forkfork")
+def test_forkfork():
+  s = """
+  $ forkfork
+  forkfork start
+  forkfork passed!
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "multiadd")
+def test_multiadd():
+  s = """
+  $ multiadd
+  multiadd start.
+  ans = 289377997.
+  multiadd passed!
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "waittest")
+def test_wait():
+  s = """
+  $ waittest
+  waittest start.
+  ...
+  waittest passed!
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+run_tests()

@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+
+import os
+import re
+import subprocess
+from gradelib import *
+
+STOPS = [stop_on_line(".*passed!.*"),
+         stop_on_line(".*failed.*"),
+         stop_on_line(".*Abort @.*")]
+
+r = Runner(save("qemu.out"))
+
+@test(50, "loadkernel")
+def test_loadkernel():
+  r.run_qemu(*STOPS, stop_on_line('^Hello from OS!$'))
+  r.match('Hello from OS!', isregs=[False])
+
+@test(50, "loaduser")
+def test_loaduser():
+  s = """
+  ^Hello, I am at 0x010[0-9a-f]{5}
+  loaduser test: start
+  loaduser test: passed!
+  """
+  _, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS)
+  r.match(*exps, isregs=isregs)
+
+run_tests()

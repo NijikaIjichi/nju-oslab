@@ -1,0 +1,7 @@
+build
+qemu.out*
+__pycache__
+.history
+/*.log
+compile_commands.json
+.cache

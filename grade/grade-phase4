@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+
+import os
+import re
+import subprocess
+from gradelib import *
+
+STOPS = [stop_on_line(".*failed.*"), 
+         stop_on_line(".*Abort @.*")]
+
+r = Runner(save("qemu.out"))
+
+@test(10, "childtest")
+def test_child():
+  s = r"""
+  $ childtest 1 10 25
+  ^(parent|child) sleep\.\.\.
+  ^(parent|child) sleep\.\.\.
+  child exit @ 0
+  $ childtest 1 25 10
+  ^(parent|child) sleep\.\.\.
+  ^(parent|child) sleep\.\.\.
+  child exit @ 0
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "forkfork")
+def test_forkfork():
+  s = """
+  $ forkfork
+  forkfork start
+  forkfork passed!
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "multiadd")
+def test_multiadd():
+  s = """
+  $ multiadd
+  multiadd start.
+  ans = 289377997.
+  multiadd passed!
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "waittest")
+def test_wait():
+  s = """
+  $ waittest
+  waittest start.
+  ...
+  waittest passed!
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(20, "pingpong")
+def test_pingpong():
+  s = """
+  $ pingpong 114514 1919810
+  pingpong start
+  ping: pid=2, i=0, x=114514
+  pong: pid=3, i=0, x=1919810
+  ping: pid=2, i=1, x=114514
+  pong: pid=3, i=1, x=1919810
+  ping: pid=2, i=2, x=114514
+  pong: pid=3, i=2, x=1919810
+  ping: pid=2, i=3, x=114514
+  pong: pid=3, i=3, x=1919810
+  ping: pid=2, i=4, x=114514
+  pong: pid=3, i=4, x=1919810
+  ping: pid=2, i=5, x=114514
+  pong: pid=3, i=5, x=1919810
+  ping: pid=2, i=6, x=114514
+  pong: pid=3, i=6, x=1919810
+  ping: pid=2, i=7, x=114514
+  pong: pid=3, i=7, x=1919810
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(20, "producer")
+def test_producer():
+  curr_buf, MAXBUF = 0, 32
+  curr_line, MAXLINE = 0, 300
+  fail = False
+  producer_times = [0, 0, 0, 0]
+  customer_times = [0, 0]
+
+  def handle(line: str):
+    if line.startswith("producer"):
+      handle_producer(line)
+    elif line.startswith("consumer"):
+      handle_customer(line)
+    else:
+      set_fail(line)
+
+  def handle_producer(line):
+    nonlocal curr_buf, curr_line
+    no_str = line[9:10]
+    if not no_str.isdigit():
+      set_fail(line)
+    no = int(no_str)
+    if no < 0 or no > 3:
+      set_fail(line)
+    if curr_buf >= MAXBUF:
+      set_fail(line)
+    curr_buf += 1
+    curr_line += 1
+    producer_times[no] += 1
+    if curr_line >= MAXLINE:
+      raise TerminateTest
+  
+  def handle_customer(line):
+    nonlocal curr_buf, curr_line
+    no_str = line[9:10]
+    if not no_str.isdigit():
+      set_fail(line)
+    no = int(no_str)
+    if no < 0 or no > 1:
+      set_fail(line)
+    if curr_buf < 0:
+      set_fail(line)
+    curr_buf -= 1
+    curr_line += 1
+    customer_times[no] += 1
+    if curr_line >= MAXLINE:
+      raise TerminateTest
+  
+  def set_fail(_):
+    nonlocal fail
+    fail = True
+    raise TerminateTest
+
+  r.run_qemu(call_on_line(".*failed.*", set_fail), 
+             call_on_line(".*Abort @.*", set_fail), 
+             call_on_line(r"(^producer \d: produce$)|(^consumer \d: consume$)", handle),
+             shell_script(['producer']))
+  assert not fail
+  assert 0 not in producer_times
+  assert 0 not in customer_times
+
+@test(20, "philosopher")
+def test_philosopher():
+  chops = [1, 1, 1, 1, 1]
+  times = [0, 0, 0, 0, 0]
+  curr_line, MAXLINE = 0, 300
+  fail = False
+
+  def handle(line: str):
+    if line.endswith("start eating."):
+      handle_eat(line)
+    elif line.endswith("end eating."):
+      handle_think(line)
+    else:
+      set_fail(line)
+  
+  def handle_eat(line: str):
+    nonlocal curr_line
+    no_str = line[12:13]
+    if not no_str.isdigit():
+      set_fail(line)
+    no = int(no_str)
+    if no < 0 or no > 4 or chops[no] == 0 or chops[(no + 1) % 5] == 0:
+      set_fail(line)
+    chops[no] = 0
+    chops[(no + 1) % 5] = 0
+    times[no] += 1
+    curr_line += 1
+    if curr_line >= MAXLINE:
+      raise TerminateTest
+  
+  def handle_think(line: str):
+    nonlocal curr_line
+    no_str = line[12:13]
+    if not no_str.isdigit():
+      set_fail(line)
+    no = int(no_str)
+    if no < 0 or no > 4 or chops[no] == 1 or chops[(no + 1) % 5] == 1:
+      set_fail(line)
+    chops[no] = 1
+    chops[(no + 1) % 5] = 1
+    curr_line += 1
+    if curr_line >= MAXLINE:
+      raise TerminateTest
+
+  def set_fail(_):
+    nonlocal fail
+    fail = True
+    raise TerminateTest
+
+  r.run_qemu(call_on_line(".*failed.*", set_fail), 
+             call_on_line(".*Abort @.*", set_fail), 
+             call_on_line(r"(^philosopher \d start eating\.$)|(^philosopher \d end eating\.$)", handle),
+             shell_script(['philosopher']))
+  assert not fail
+  assert 0 not in times
+
+run_tests()

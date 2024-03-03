@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+
+import os
+import re
+import subprocess
+import shutil
+from gradelib import *
+
+r = Runner(save("qemu.out"))
+
+def backup_fs(f):
+  def func():
+    shutil.copyfile("build/os.img", "build/os.backup")
+    try:
+      f()
+    finally:
+      shutil.copyfile("build/os.backup", "build/os.img")
+  func.__name__ = f.__name__
+  return func
+
+@test(13, "writesmall")
+@backup_fs
+def test_writesmall():
+  s = """
+  $ echo 114514 hello > hello.txt
+  $ cat hello.txt
+  114514 hello
+  $ echo bye 1919810 >> hello.txt
+  $ cat hello.txt
+  114514 hello
+  bye 1919810
+  $ cat words.txt > hello.txt
+  $ cat hello.txt
+  hello world
+  nihao shijie
+  ohayou seikai
+  $ echo > hello.txt
+  $ cat hello.txt
+  $ echo hello > /dev/serial
+  hello
+  $ echo hello > /dev/null
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(13, "writebig")
+@backup_fs
+def test_writebig():
+  s = """
+  $ cat number.txt > number2.txt
+  $ wc number2.txt
+  1 300000 1988890 number2.txt
+  $ cat number.txt >> number2.txt
+  $ wc number2.txt
+  2 600000 3977780 number2.txt
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(13, "dirtest")
+@backup_fs
+def test_dir():
+  s = r"""
+  $ mkdir dirtest
+  $ cd dirtest
+  $ /echo aijou karen > 1.txt
+  $ /echo kagura hikari > 2.txt
+  $ /mkdir 3
+  $ /ls
+  ^\.                           2 160 \d+
+  ^\.\.                          2 \d+ 1
+  ^1\.txt                       1 12 \d+
+  ^2\.txt                       1 14 \d+
+  ^3                           2 64 \d+
+  $ cd 3
+  $ /ls
+  ^\.                           2 64 \d+
+  ^\.\.                          2 160 \d+
+  $ cd ..
+  $ /ls
+  ^\.                           2 160 \d+
+  ^\.\.                          2 \d+ 1
+  ^1\.txt                       1 12 \d+
+  ^2\.txt                       1 14 \d+
+  ^3                           2 64 \d+
+  $ cd /dirtest/3
+  $ /ls
+  ^\.                           2 64 \d+
+  ^\.\.                          2 160 \d+
+  $ cd nosuchdir
+  cannot cd nosuchdir
+  $ cd ../nosuchdir
+  cannot cd ../nosuchdir
+  $ /ls /dev
+  ^\.                           2 128 \d+
+  ^\.\.                          2 \d+ 1
+  serial                      3 0 0
+  null                        3 0 0
+  $ /echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(13, "pwdtest")
+@backup_fs
+def test_pwd():
+  s = """
+  $ pwd
+  /
+  $ mkdir pwdtest
+  $ cd pwdtest
+  $ /pwd
+  /pwdtest
+  $ /mkdir aaa
+  $ cd aaa
+  $ /pwd
+  /pwdtest/aaa
+  $ /mkdir ../bbb
+  $ cd ../bbb
+  $ /pwd
+  /pwdtest/bbb
+  $ /mkdir /pwdtest/aaa/ccc
+  $ cd ../aaa/ccc
+  $ /pwd
+  /pwdtest/aaa/ccc
+  $ cd ../../..
+  $ pwd
+  /
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(9, "rmfile")
+@backup_fs
+def test_rmfile():
+  s = r"""
+  $ mkdir rmfile
+  $ cd rmfile
+  $ /echo hello > 1.txt
+  $ /cat 1.txt
+  hello
+  $ /rm 1.txt
+  $ /cat 1.txt
+  cat: cannot open 1.txt
+  $ /ls
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ 1
+  $ /echo hello >> 1.txt
+  $ /cat 1.txt
+  hello
+  $ /rm 1.txt
+  $ /cat ../number.txt > 2.txt &
+  $ /rm 2.txt
+  $ /cat 2.txt
+  cat: cannot open 2.txt
+  $ /ls
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ 1
+  $ /echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(9, "rmdir")
+@backup_fs
+def test_rmdir():
+  s = r"""
+  $ mkdir rmdir
+  $ cd rmdir
+  $ /mkdir aaa
+  $ /echo hello > aaa/1.txt
+  $ /rm aaa
+  rm: aaa failed to delete
+  $ /rm aaa/1.txt
+  $ /rm aaa
+  $ /ls aaa
+  ls: cannot open aaa
+  $ /ls
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ 1
+  $ /mkdir aaa
+  $ /ls aaa
+  ^\.                           2 64 \d+
+  ^\.\.                          2 \d+ \d+
+  $ /rm aaa
+  $ /ls aaa
+  ls: cannot open aaa
+  $ /ls
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ 1
+  $ /rm .
+  rm: . failed to delete
+  $ /rm ..
+  rm: .. failed to delete
+  $ /rm /rmdir/.
+  rm: /rmdir/. failed to delete
+  $ /rm /rmdir/..
+  rm: /rmdir/.. failed to delete
+  $ /ls
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ 1
+  $ /echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(10, "rmtest")
+@backup_fs
+def test_rmtest():
+  s = r"""
+  $ rmtest
+  rmtest start
+  rmtest passed
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(20, "consistency")
+@backup_fs
+def test_consistency():
+  s = r"""
+  $ echo hello > contest1.txt
+  $ echo hi > contest2.txt
+  $ echo bye >> contest2.txt
+  $ rm contest1.txt
+  $ mkdir contest
+  $ mkdir contest/1
+  $ mkdir contest/1/1
+  $ mkdir contest/1/2
+  $ mkdir contest/1/3
+  $ rm contest/1/1
+  $ rm contest/1/3
+  $ echo hello > contest/1/1
+  $ echo hi > contest/2
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+  s = r"""
+  $ cat contest1.txt
+  cat: cannot open contest1.txt
+  $ cat contest2.txt
+  hi
+  bye
+  $ ls contest
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ 1
+  ^1                           2 \d+ \d+
+  ^2                           1 3 \d+
+  $ cat contest/2
+  hi
+  $ ls contest/1
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ \d+
+  ^1                           1 6 \d+
+  ^2                           2 64 \d+
+  $ cat contest/1/1
+  hello
+  $ ls contest/1/2
+  ^\.                           2 \d+ \d+
+  ^\.\.                          2 \d+ \d+
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(stop_on_line(".*Abort @.*"), shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+run_tests()

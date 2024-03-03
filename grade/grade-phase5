@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+
+import os
+import re
+import subprocess
+from gradelib import *
+
+STOPS = [stop_on_line(".*failed!.*"), 
+         stop_on_line(".*Abort @.*")]
+
+r = Runner(save("qemu.out"))
+
+@test(30, "readfile")
+def test_readfile():
+  s = """
+  $ cat words.txt
+  hello world
+  nihao shijie
+  ohayou seikai
+  $ head adashima.txt
+  　こっそり覗く桜さんの横顔は、みんなが言うように氷で築き上げられたようだった。
+  　興味という熱のない瞳は、目の前の景色を映すばかりの鏡のようだった。
+  　中学三年、春。進級してクラスが替わって自己主張を控えていたら、いつの間にか図書委員に割り当てられていた。正確には文化委員とか、そういう言い方だったけど内容が図書室の当番なのだから図書委員でいいかなと思う。そして早速、一回目の当番を命じられた。
+  　カウンターには私と、そして桜さんが座っている。
+  　正直、緊張していた。
+  　桜さんとは一年生の時も同じクラスだったけど、話したことがない。でもどういう人かは遠くから見ていても分かっていた。愛想の欠片もなくて、冷淡で、口数が少なくて。
+  　そして、その横顔は透き通るように綺麗だ。
+  　だから、氷の彫像とでも評されるのだと思う。今、私もそれを実感してしまった。
+  　とはいえいつまでも、その横顔に見惚れるように眺めているわけにもいかない。
+  　深呼吸の後、意を決する。
+  $ grep v=80 qemu.log
+     3: v=80 e=0000 i=1 cpl=3 IP=001b:080486b5 pc=080486b5 SP=0023:bffffcac env->regs[R_EAX]=00000000
+     4: v=80 e=0000 i=1 cpl=3 IP=001b:080486d7 pc=080486d7 SP=0023:bffffe9c env->regs[R_EAX]=00000001
+  $ wc brother.txt
+  1 113 605 brother.txt
+  $ wc number.txt
+  1 300000 1988890 number.txt
+  $ cat nosuchfile
+  cat: cannot open nosuchfile
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(20, "readtest")
+def test_readtest():
+  s = """
+  $ readtest
+  readtest start
+  readtest passed!
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(30, "redirect")
+def test_redirect():
+  s = """
+  $ echo hello > /dev/serial
+  hello
+  $ echo bye > /dev/null
+  $ xargs echo 114514 < words.txt
+  114514 hello world
+  114514 nihao shijie
+  114514 ohayou seikai
+  $ wc < nijika.txt
+  60 231 7260
+  $ grep o.*o < words.txt
+  hello world
+  ohayou seikai
+  $ cat < adashima.txt > /dev/null
+  $ cat < nosuchfile
+  open nosuchfile failed
+  $ echo OK
+  OK
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+@test(20, "stat")
+def test_stat():
+  s = r"""
+  $ ls adashima.txt
+  ^adashima\.txt                1 17513 \d+
+  $ ls watanare.txt
+  ^watanare\.txt                1 28179 \d+
+  $ ls number.txt
+  ^number\.txt                  1 1988890 \d+
+  $ ls qemu.log
+  ^qemu\.log                    1 40095 \d+
+  $ ls /dev/serial
+  serial                      3 0 0
+  $ ls /dev/null
+  null                        3 0 0
+  """
+  script, exps, isregs = parse_script(s)
+  r.run_qemu(*STOPS, shell_script(script))
+  r.match(*exps, isregs=isregs, continued=True)
+
+run_tests()
